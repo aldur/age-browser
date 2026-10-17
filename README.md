@@ -3,7 +3,7 @@
 Encrypt and decrypt files in Chrome through [age-encryption][0] for
 cryptography and WebAuthn.
 
-Open the online tool in desktop Chrome. File contents stay in the browser.
+File contents stay in the browser.
 
 ## Prepare the security key
 
@@ -112,7 +112,9 @@ It deploys the static bundle from the default branch.
 In repository settings, open **Pages** and set **Source** to **GitHub Actions**.
 Push to the default branch or run the workflow manually from that branch.
 
-Default Pages projects share the account's `github.io` origin and relying party, with HTML CSP but without `serve.nix` headers.
+Default Pages projects share the account's `github.io` origin and relying party.
+The HTML content security policy (CSP) still applies.
+The server headers from `serve.nix` do not apply on Pages.
 An identity created on localhost cannot be used on a GitHub Pages hostname.
 Keep access to the original hostname or use the CLI method above to decrypt existing files.
 
