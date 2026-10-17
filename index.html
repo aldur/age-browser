@@ -13,23 +13,56 @@
     <main>
       <h1>age file encryption</h1>
       <p>Use Chrome. File contents stay in the browser.</p>
+      <p>First, prepare your identities. Then select encryption or decryption.</p>
       <fieldset id="controls">
-        <legend>Security key</legend>
-        <p>Select your physical YubiKey in the Chrome prompt.</p>
-        <button id="create" type="button">Create identity</button>
-        <button id="load" type="button">Load identity</button>
-        <button id="save" type="button" disabled>Save identity</button>
-        <p id="identity-status">No identity is loaded.</p>
-        <p>Keep a copy of the identity file. Decryption needs this file and the original security key.</p>
-        <hr>
-        <button id="input" type="button">Select input file</button>
-        <p id="file-status">No input file is selected.</p>
-        <button id="encrypt" type="button" disabled>Encrypt file</button>
-        <button id="decrypt" type="button" disabled>Decrypt file</button>
+        <legend class="visually-hidden">File encryption controls</legend>
+        <section aria-labelledby="identity-heading">
+          <h2 id="identity-heading">Prepare identities</h2>
+          <p>Load one identity for each key. All identities must use this site's hostname.</p>
+          <button id="load" type="button">Load identity files</button>
+          <p id="no-identities">No identities are loaded.</p>
+          <ul id="identities" aria-label="Loaded identities"></ul>
+          <details>
+            <summary>Create an identity for a new key</summary>
+            <p>Connect your YubiKey. Select Create identity, then complete the PIN and touch prompts.</p>
+            <p>Select your physical security key in Chrome.</p>
+            <button id="create" type="button">Create identity</button>
+            <button id="save" type="button" disabled>Save identity</button>
+            <p id="pending-identity" hidden>Save this identity before you continue.</p>
+            <p>Give each identity file a name that identifies its key. Keep a separate copy.</p>
+          </details>
+          <p id="identity-status" role="status" aria-live="polite"></p>
+        </section>
+        <section aria-labelledby="encrypt-heading">
+          <h2 id="encrypt-heading">Encrypt a file</h2>
+          <p>Use all identities listed above. You must approve each key. Any one of these keys can decrypt the saved file.</p>
+          <button id="encrypt-input" type="button">Select file to encrypt</button>
+          <p id="encrypt-file">No input file is selected.</p>
+          <button id="encrypt" type="button" disabled>Encrypt and save</button>
+          <p role="status" aria-live="polite"></p>
+        </section>
+        <section aria-labelledby="decrypt-heading">
+          <h2 id="decrypt-heading">Decrypt a file</h2>
+          <p>Select one identity used to encrypt the file. You need its original key and PIN.</p>
+          <label for="decrypt-identity">Identity file</label>
+          <select id="decrypt-identity" disabled></select>
+          <button id="decrypt-input" type="button">Select file to decrypt</button>
+          <p id="decrypt-file">No input file is selected.</p>
+          <button id="decrypt" type="button" disabled>Decrypt and save</button>
+          <p role="status" aria-live="polite"></p>
+        </section>
       </fieldset>
-      <p id="status" role="status" aria-live="polite">Create an identity or load an identity file.</p>
       <p>Keep this tab open until the operation is complete. Prevent the computer from entering sleep mode.</p>
       <noscript>Enable JavaScript to use this tool.</noscript>
     </main>
+    <dialog id="key-prompt" aria-labelledby="key-step" aria-describedby="key-name">
+      <form method="dialog">
+        <h2 id="key-step"></h2>
+        <p id="key-name"></p>
+        <p>Select Continue, then complete the Chrome PIN and touch prompts.</p>
+        <button value="cancel">Cancel</button>
+        <button value="continue" autofocus>Continue</button>
+      </form>
+    </dialog>
   </body>
 </html>

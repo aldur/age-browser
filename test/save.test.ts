@@ -7,28 +7,30 @@ import { execFileSync } from 'node:child_process';
 import { Encrypter, Decrypter, generateIdentity, identityToRecipient } from 'age-encryption';
 import { saveStream } from '../src/save.ts';
 
-test('streamed files work with the age CLI in both directions', async () => {
+test('either recipient can decrypt streamed files in the browser library and age CLI', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'age-browser-'));
   try {
-    const identity = await generateIdentity();
-    const recipient = await identityToRecipient(identity);
+    const identities = await Promise.all([generateIdentity(), generateIdentity()]);
+    const recipients = await Promise.all(identities.map(identityToRecipient));
     const keyPath = join(directory, 'key.txt');
     const encryptedPath = join(directory, 'encrypted.age');
-    await writeFile(keyPath, identity + '\n', { mode: 0o600 });
     const plain = new Uint8Array(131073).map((_, i) => i % 251);
     const encrypter = new Encrypter();
-    encrypter.addRecipient(recipient);
+    for (const recipient of recipients) encrypter.addRecipient(recipient);
     const chunks: Uint8Array[] = [];
     await saveStream(await encrypter.encrypt(new Blob([plain]).stream()), {
       createWritable: async () => new WritableStream({ write: chunk => { chunks.push(chunk); } }),
     } as Pick<FileSystemFileHandle, 'createWritable'>);
     await writeFile(encryptedPath, Buffer.concat(chunks));
-    assert.deepEqual(new Uint8Array(execFileSync('age', ['-d', '-i', keyPath, encryptedPath])), plain);
-    const encrypted = execFileSync('age', ['-r', recipient], { input: plain });
-    const decrypter = new Decrypter();
-    decrypter.addIdentity(identity);
-    const output = await decrypter.decrypt(new Blob([encrypted]).stream());
-    assert.deepEqual(new Uint8Array(await new Response(output).arrayBuffer()), plain);
+    const encrypted = execFileSync('age', recipients.flatMap(recipient => ['-r', recipient]), { input: plain });
+    for (const identity of identities) {
+      await writeFile(keyPath, identity + '\n', { mode: 0o600 });
+      assert.deepEqual(new Uint8Array(execFileSync('age', ['-d', '-i', keyPath, encryptedPath])), plain);
+      const decrypter = new Decrypter();
+      decrypter.addIdentity(identity);
+      const output = await decrypter.decrypt(new Blob([encrypted]).stream());
+      assert.deepEqual(new Uint8Array(await new Response(output).arrayBuffer()), plain);
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

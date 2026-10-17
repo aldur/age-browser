@@ -2,22 +2,56 @@ import { Encrypter, Decrypter, webauthn } from 'age-encryption';
 import { saveStream } from './save.ts';
 
 const controls = document.querySelector<HTMLFieldSetElement>('#controls')!;
-const status = document.querySelector<HTMLParagraphElement>('#status')!;
-const identityStatus = document.querySelector<HTMLParagraphElement>('#identity-status')!;
-const fileStatus = document.querySelector<HTMLParagraphElement>('#file-status')!;
+const identityList = document.querySelector<HTMLUListElement>('#identities')!;
+const decryptIdentity = document.querySelector<HTMLSelectElement>('#decrypt-identity')!;
+const keyPrompt = document.querySelector<HTMLDialogElement>('#key-prompt')!;
 const button = (id: string) => document.querySelector<HTMLButtonElement>(`#${id}`)!;
-let identity = '';
-let identityFile: FileSystemFileHandle | undefined;
-let inputFile: FileSystemFileHandle | undefined;
+type Mode = 'encrypt' | 'decrypt';
+const identities: { value: string; file: FileSystemFileHandle }[] = [];
+const inputs: Partial<Record<Mode, FileSystemFileHandle>> = {};
+let pendingIdentity = '';
 let busy = false;
 
-function action(id: string, task: () => Promise<string>): void {
-  button(id).onclick = async () => {
+function update(): void {
+  const selected = decryptIdentity.value;
+  identityList.replaceChildren();
+  decryptIdentity.replaceChildren();
+  for (const identity of identities) {
+    const item = document.createElement('li');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.setAttribute('aria-label', `Remove ${identity.file.name}`);
+    remove.onclick = () => {
+      identities.splice(identities.indexOf(identity), 1);
+      update();
+      document.querySelector('#identity-status')!.textContent = '';
+      button(pendingIdentity ? 'save' : 'load').focus();
+    };
+    item.append(identity.file.name, ' ', remove);
+    identityList.append(item);
+    decryptIdentity.add(new Option(identity.file.name, identity.value));
+  }
+  if (identities.some(identity => identity.value === selected)) decryptIdentity.value = selected;
+  decryptIdentity.disabled = identities.length === 0;
+  document.querySelector('#no-identities')!.toggleAttribute('hidden', identities.length > 0);
+  document.querySelector('#pending-identity')!.toggleAttribute('hidden', !pendingIdentity);
+  button('create').disabled = button('load').disabled = !!pendingIdentity;
+  button('save').disabled = !pendingIdentity;
+  for (const mode of ['encrypt', 'decrypt'] as const) {
+    button(mode).disabled = !identities.length || !inputs[mode] || !!pendingIdentity;
+  }
+}
+
+function action(id: string, task: (status: HTMLParagraphElement) => Promise<string>): void {
+  const control = button(id);
+  const status = control.closest('section')!.querySelector<HTMLParagraphElement>('[role="status"]')!;
+  control.onclick = async () => {
     busy = true;
     controls.disabled = true;
-    status.textContent = 'Complete the Chrome prompt.';
+    status.textContent = 'Complete the file or security-key prompt.';
     try {
-      status.textContent = await task();
+      status.textContent = await task(status);
     } catch (error) {
       status.textContent = error instanceof DOMException && ['AbortError', 'NotAllowedError'].includes(error.name)
         ? 'The operation stopped. The tool did not save an output file.'
@@ -25,67 +59,98 @@ function action(id: string, task: () => Promise<string>): void {
     } finally {
       busy = false;
       controls.disabled = false;
-      button('save').disabled = !identity;
-      button('encrypt').disabled = button('decrypt').disabled = !identityFile || !inputFile;
+      update();
+      (control.disabled ? button(pendingIdentity ? 'save' : 'load') : control).focus();
     }
   };
 }
 
-action('create', async () => {
-  identity = await webauthn.createCredential({ type: 'security-key', keyName: 'age file encryption' });
-  identityFile = undefined;
-  identityStatus.textContent = 'The identity is ready. Save the identity file before you continue.';
-  return 'The security key is ready. Select Save identity.';
-});
+async function checkOutput(output: FileSystemFileHandle): Promise<void> {
+  for (const file of [...identities.map(identity => identity.file), ...Object.values(inputs)]) {
+    if (await output.isSameEntry(file)) {
+      throw new Error('Select an output file that is different from the input files and identity files.');
+    }
+  }
+}
 
-action('load', async () => {
-  const [handle] = await showOpenFilePicker();
-  const file = await handle.getFile();
-  if (file.size > 16384) throw new Error('The identity file is too large. The limit is 16 KiB.');
-  const lines = (await file.text()).split(/\r?\n/).map(line => line.trim())
-    .filter(line => line && !line.startsWith('#'));
-  if (lines.length !== 1) throw new Error('Select a file that contains one hardware identity.');
-  new webauthn.WebAuthnIdentity({ identity: lines[0] });
-  identity = lines[0];
-  identityFile = handle;
-  identityStatus.textContent = `Identity file: ${file.name}`;
-  return 'The identity is ready.';
+function connectKey(name: string, step: string): Promise<void> {
+  document.querySelector('#key-step')!.textContent = step;
+  document.querySelector('#key-name')!.textContent = `Connect the key for ${name}.`;
+  keyPrompt.returnValue = '';
+  return new Promise((resolve, reject) => {
+    keyPrompt.onclose = () => keyPrompt.returnValue === 'continue'
+      ? resolve()
+      : reject(new DOMException('The key prompt was cancelled.', 'AbortError'));
+    keyPrompt.showModal();
+  });
+}
+
+action('create', async () => {
+  pendingIdentity = await webauthn.createCredential({ type: 'security-key', keyName: 'age file encryption' });
+  return 'The identity is ready. Select Save identity.';
 });
 
 action('save', async () => {
-  const handle = await showSaveFilePicker({ suggestedName: 'age-yubikey.txt' });
-  if (inputFile && await handle.isSameEntry(inputFile)) throw new Error('Select a different output file.');
-  await saveStream(new Blob([identity + '\n']).stream(), handle);
-  identityFile = handle;
-  identityStatus.textContent = `Identity file: ${handle.name}`;
+  const file = await showSaveFilePicker({ suggestedName: 'age-yubikey.txt' });
+  await checkOutput(file);
+  await saveStream(new Blob([pendingIdentity + '\n']).stream(), file);
+  identities.push({ value: pendingIdentity, file });
+  pendingIdentity = '';
   return 'The identity file is saved. Keep a separate copy.';
 });
 
-action('input', async () => {
-  const [handle] = await showOpenFilePicker();
-  inputFile = handle;
-  fileStatus.textContent = `Input file: ${handle.name}`;
-  return 'Select Encrypt file or Decrypt file.';
+action('load', async () => {
+  const files = await showOpenFilePicker({ multiple: true });
+  const loaded = [];
+  for (const handle of files) {
+    const file = await handle.getFile();
+    if (file.size > 16384) throw new Error(`${file.name}: The identity file is too large. The limit is 16 KiB.`);
+    const lines = (await file.text()).split(/\r?\n/).map(line => line.trim())
+      .filter(line => line && !line.startsWith('#'));
+    if (lines.length !== 1) throw new Error(`${file.name}: The file must contain one hardware identity.`);
+    new webauthn.WebAuthnIdentity({ identity: lines[0] });
+    if (![...identities, ...loaded].some(identity => identity.value === lines[0])) {
+      loaded.push({ value: lines[0], file: handle });
+    }
+  }
+  identities.push(...loaded);
+  return 'The identities are ready. Select Encrypt a file or Decrypt a file.';
 });
 
 for (const mode of ['encrypt', 'decrypt'] as const) {
-  action(mode, async () => {
-    const input = inputFile!;
+  action(`${mode}-input`, async () => {
+    const [file] = await showOpenFilePicker();
+    inputs[mode] = file;
+    document.querySelector(`#${mode}-file`)!.textContent = file.name;
+    return `The input file is ready. Select ${mode === 'encrypt' ? 'Encrypt' : 'Decrypt'} and save.`;
+  });
+
+  action(mode, async status => {
+    const input = inputs[mode]!;
     const name = mode === 'encrypt' ? `${input.name}.age` : input.name.replace(/\.age$/, '') + '.decrypted';
     const output = await showSaveFilePicker({ suggestedName: name });
-    if (await output.isSameEntry(input) || (identityFile && await output.isSameEntry(identityFile))) {
-      throw new Error('Select an output file that is different from the input file and the identity file.');
-    }
+    await checkOutput(output);
     const file = await input.getFile();
-    const options = { identity };
     let stream: ReadableStream<Uint8Array>;
     if (mode === 'encrypt') {
       const cipher = new Encrypter();
-      cipher.addRecipient(new webauthn.WebAuthnRecipient(options));
+      for (const [index, identity] of identities.entries()) {
+        const recipient = new webauthn.WebAuthnRecipient({ identity: identity.value });
+        cipher.addRecipient({
+          async wrapFileKey(fileKey) {
+            await connectKey(identity.file.name, `Encryption key ${index + 1} of ${identities.length}`);
+            status.textContent = `Complete the Chrome prompt for ${identity.file.name}.`;
+            return recipient.wrapFileKey(fileKey);
+          },
+        });
+      }
       stream = await cipher.encrypt(file.stream());
     } else {
+      const identity = identities.find(identity => identity.value === decryptIdentity.value)!;
+      await connectKey(identity.file.name, 'Decryption key');
+      status.textContent = `Complete the Chrome prompt for ${identity.file.name}.`;
       const cipher = new Decrypter();
-      cipher.addIdentity(new webauthn.WebAuthnIdentity(options));
+      cipher.addIdentity(new webauthn.WebAuthnIdentity({ identity: identity.value }));
       stream = await cipher.decrypt(file.stream());
     }
     status.textContent = 'Wait until the file operation is complete.';
@@ -95,11 +160,12 @@ for (const mode of ['encrypt', 'decrypt'] as const) {
 }
 
 window.addEventListener('beforeunload', event => {
-  if (busy || (identity && !identityFile)) event.preventDefault();
+  if (busy || pendingIdentity) event.preventDefault();
 });
 
+update();
 if (!window.isSecureContext || !window.PublicKeyCredential
   || !window.showOpenFilePicker || !window.showSaveFilePicker) {
   controls.disabled = true;
-  status.textContent = 'Open this page in current desktop Chrome. Use HTTPS or localhost.';
+  document.querySelector('#identity-status')!.textContent = 'Open this page in current desktop Chrome. Use HTTPS or localhost.';
 }
