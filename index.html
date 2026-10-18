@@ -39,6 +39,7 @@
           <button id="encrypt-input" type="button">Select file to encrypt</button>
           <p id="encrypt-file">No input file is selected.</p>
           <button id="encrypt" type="button" disabled>Encrypt and save</button>
+          <progress id="encrypt-progress" max="100" value="0" aria-label="Encryption progress" hidden></progress>
           <p role="status" aria-live="polite"></p>
         </section>
         <section aria-labelledby="decrypt-heading">
@@ -49,6 +50,7 @@
           <button id="decrypt-input" type="button">Select file to decrypt</button>
           <p id="decrypt-file">No input file is selected.</p>
           <button id="decrypt" type="button" disabled>Decrypt and save</button>
+          <progress id="decrypt-progress" max="100" value="0" aria-label="Decryption progress" hidden></progress>
           <p role="status" aria-live="polite"></p>
         </section>
       </fieldset>

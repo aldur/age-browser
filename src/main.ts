@@ -1,5 +1,6 @@
 import { Encrypter, Decrypter, webauthn } from 'age-encryption';
 import { saveStream } from './save.ts';
+import { trackProgress } from './progress.ts';
 
 const controls = document.querySelector<HTMLFieldSetElement>('#controls')!;
 const identityList = document.querySelector<HTMLUListElement>('#identities')!;
@@ -118,6 +119,7 @@ action('load', async () => {
 });
 
 for (const mode of ['encrypt', 'decrypt'] as const) {
+  const progress = document.querySelector<HTMLProgressElement>(`#${mode}-progress`)!;
   action(`${mode}-input`, async () => {
     const [file] = await showOpenFilePicker();
     inputs[mode] = file;
@@ -131,6 +133,18 @@ for (const mode of ['encrypt', 'decrypt'] as const) {
     const output = await showSaveFilePicker({ suggestedName: name });
     await checkOutput(output);
     const file = await input.getFile();
+    const verb = mode === 'encrypt' ? 'Encrypting' : 'Decrypting';
+    let percent = 0;
+    const showProgress = () => {
+      progress.value = percent;
+      status.textContent = `${verb}: ${percent}% of input read.`;
+    };
+    const source = trackProgress(file.stream(), bytes => {
+      const next = file.size === 0 ? 0 : Math.min(100, Math.floor(bytes / file.size * 100));
+      if (next === percent) return;
+      percent = next;
+      if (!progress.hidden) showProgress();
+    });
     let stream: ReadableStream<Uint8Array>;
     if (mode === 'encrypt') {
       const cipher = new Encrypter();
@@ -138,23 +152,33 @@ for (const mode of ['encrypt', 'decrypt'] as const) {
         const recipient = new webauthn.WebAuthnRecipient({ identity: identity.value });
         cipher.addRecipient({
           async wrapFileKey(fileKey) {
+            status.textContent = `Waiting for key ${index + 1} of ${identities.length}: ${identity.file.name}.`;
             await connectKey(identity.file.name, `Encryption key ${index + 1} of ${identities.length}`);
             status.textContent = `Complete the Chrome prompt for ${identity.file.name}.`;
             return recipient.wrapFileKey(fileKey);
           },
         });
       }
-      stream = await cipher.encrypt(file.stream());
+      stream = await cipher.encrypt(source);
     } else {
       const identity = identities.find(identity => identity.value === decryptIdentity.value)!;
+      status.textContent = `Waiting for key: ${identity.file.name}.`;
       await connectKey(identity.file.name, 'Decryption key');
       status.textContent = `Complete the Chrome prompt for ${identity.file.name}.`;
       const cipher = new Decrypter();
       cipher.addIdentity(new webauthn.WebAuthnIdentity({ identity: identity.value }));
-      stream = await cipher.decrypt(file.stream());
+      stream = await cipher.decrypt(source);
     }
-    status.textContent = 'Wait until the file operation is complete.';
-    await saveStream(stream, output);
+    progress.hidden = false;
+    showProgress();
+    try {
+      await saveStream(stream, output, () => {
+        progress.value = 100;
+        status.textContent = 'Finishing save…';
+      });
+    } finally {
+      progress.hidden = true;
+    }
     return `The output file is saved: ${output.name}`;
   });
 }
